@@ -23,11 +23,15 @@ import org.apache.flink.connector.pulsar.source.enumerator.cursor.StartCursor;
 
 import org.apache.pulsar.client.api.ConsumerBuilder;
 import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
+import org.apache.pulsar.client.internal.DefaultImplementation;
+
+import java.util.Objects;
 
 import static org.apache.flink.util.Preconditions.checkState;
 
-/** This cursor would left pulsar start consuming from a specific message id. */
+/** This cursor would leave pulsar start consuming from a specific message id. */
 public class MessageIdStartCursor implements StartCursor {
     private static final long serialVersionUID = -8057345435887170111L;
 
@@ -43,24 +47,60 @@ public class MessageIdStartCursor implements StartCursor {
      * code</a> for understanding pulsar internal logic.
      *
      * @param messageId The message id for start position.
-     * @param inclusive Should we include the start message id in consuming result.
+     * @param inclusive Should we include the start message id in consuming result. This is works
+     *     only if we provide a specified message id instead of {@link MessageId#earliest} or {@link
+     *     MessageId#latest}.
      */
     public MessageIdStartCursor(MessageId messageId, boolean inclusive) {
-        if (inclusive) {
-            this.messageId = messageId;
+        MessageIdImpl id = MessageIdImpl.convertToMessageIdImpl(messageId);
+        checkState(
+                !(id instanceof BatchMessageIdImpl),
+                "We only support normal message id currently.");
+
+        if (MessageId.earliest.equals(id) || MessageId.latest.equals(id) || inclusive) {
+            this.messageId = id;
         } else {
-            checkState(
-                    messageId instanceof MessageIdImpl,
-                    "We only support normal message id and batch message id.");
-            MessageIdImpl id = (MessageIdImpl) messageId;
-            this.messageId =
-                    new MessageIdImpl(
-                            id.getLedgerId(), id.getEntryId() + 1, id.getPartitionIndex());
+            this.messageId = getNext(id);
+        }
+    }
+
+    /**
+     * The implementation from the <a
+     * href="https://github.com/apache/pulsar/blob/7c8dc3201baad7d02d886dbc26db5c03abce77d6/managed-ledger/src/main/java/org/apache/bookkeeper/mledger/impl/PositionImpl.java#L85">this
+     * code</a> to get the next message id.
+     */
+    public static MessageId getNext(MessageIdImpl messageId) {
+        if (messageId.getEntryId() < 0) {
+            return DefaultImplementation.getDefaultImplementation()
+                    .newMessageId(messageId.getLedgerId(), 0, messageId.getPartitionIndex());
+        } else {
+            return DefaultImplementation.getDefaultImplementation()
+                    .newMessageId(
+                            messageId.getLedgerId(),
+                            messageId.getEntryId() + 1,
+                            messageId.getPartitionIndex());
         }
     }
 
     @Override
     public CursorPosition position(String topic, int partitionId) {
         return new CursorPosition(messageId);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        MessageIdStartCursor that = (MessageIdStartCursor) o;
+        return Objects.equals(messageId, that.messageId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(messageId);
     }
 }

@@ -16,18 +16,25 @@
  * limitations under the License.
  */
 
-package org.apache.flink.connector.pulsar.testutils.cases;
+package org.apache.flink.connector.pulsar.testutils.source.cases;
 
 import org.apache.flink.connector.pulsar.testutils.PulsarTestEnvironment;
+import org.apache.flink.connector.pulsar.testutils.source.PulsarSourceTestContext;
 
 import org.apache.pulsar.client.api.SubscriptionType;
+
+import static org.apache.commons.lang3.RandomStringUtils.randomAlphabetic;
+import static org.apache.flink.connector.pulsar.source.enumerator.topic.TopicNameUtils.topicNameWithPartition;
 
 /**
  * Pulsar external context that will create multiple topics with only one partitions as source
  * splits.
  */
-public class MultipleTopicConsumingContext extends MultipleTopicTemplateContext {
-    private static final long serialVersionUID = -3855336888090886528L;
+public class MultipleTopicConsumingContext extends PulsarSourceTestContext {
+
+    private final String topicPrefix = "flink-multiple-topic-" + randomAlphabetic(8) + "-";
+
+    private int index = 0;
 
     public MultipleTopicConsumingContext(PulsarTestEnvironment environment) {
         super(environment);
@@ -35,16 +42,31 @@ public class MultipleTopicConsumingContext extends MultipleTopicTemplateContext 
 
     @Override
     protected String displayName() {
-        return "consuming message on multiple topic";
+        return "consume message on multiple topic";
+    }
+
+    @Override
+    protected String topicPattern() {
+        return topicPrefix + ".+";
     }
 
     @Override
     protected String subscriptionName() {
-        return "flink-pulsar-multiple-topic-test";
+        return "flink-multiple-topic-test";
     }
 
     @Override
     protected SubscriptionType subscriptionType() {
         return SubscriptionType.Exclusive;
+    }
+
+    @Override
+    protected String generatePartitionName() {
+        String topic = topicPrefix + index;
+        operator.createTopic(topic, 1);
+        registerTopic(topic);
+        index++;
+
+        return topicNameWithPartition(topic, 0);
     }
 }

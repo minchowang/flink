@@ -18,7 +18,6 @@
 package org.apache.flink.connector.pulsar.source.reader.deserializer;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.api.common.serialization.DeserializationSchema.InitializationContext;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.connector.pulsar.common.schema.PulsarSchema;
 import org.apache.flink.util.Collector;
@@ -36,28 +35,19 @@ import static org.apache.flink.connector.pulsar.common.schema.PulsarSchemaUtils.
  * @param <T> The output type of the message.
  */
 @Internal
-class PulsarSchemaWrapper<T> implements PulsarDeserializationSchema<T> {
+public class PulsarSchemaWrapper<T> implements PulsarDeserializationSchema<T> {
     private static final long serialVersionUID = -4864701207257059158L;
 
-    /** The serializable pulsar schema, it wrap the schema with type class. */
+    /** The serializable pulsar schema, it wraps the schema with type class. */
     private final PulsarSchema<T> pulsarSchema;
-
-    @SuppressWarnings("java:S2065")
-    private transient Schema<T> schema;
 
     public PulsarSchemaWrapper(PulsarSchema<T> pulsarSchema) {
         this.pulsarSchema = pulsarSchema;
     }
 
     @Override
-    public void open(InitializationContext context) throws Exception {
-        if (schema == null) {
-            this.schema = pulsarSchema.getPulsarSchema();
-        }
-    }
-
-    @Override
     public void deserialize(Message<byte[]> message, Collector<T> out) throws Exception {
+        Schema<T> schema = this.pulsarSchema.getPulsarSchema();
         byte[] bytes = message.getData();
         T instance = schema.decode(bytes);
 
@@ -68,5 +58,9 @@ class PulsarSchemaWrapper<T> implements PulsarDeserializationSchema<T> {
     public TypeInformation<T> getProducedType() {
         SchemaInfo info = pulsarSchema.getSchemaInfo();
         return createTypeInformation(info);
+    }
+
+    public PulsarSchema<?> pulsarSchema() {
+        return pulsarSchema;
     }
 }

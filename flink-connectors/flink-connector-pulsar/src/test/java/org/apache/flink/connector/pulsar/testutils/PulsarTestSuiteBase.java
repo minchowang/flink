@@ -20,7 +20,7 @@ package org.apache.flink.connector.pulsar.testutils;
 
 import org.apache.flink.connector.pulsar.testutils.runtime.PulsarRuntime;
 import org.apache.flink.connector.pulsar.testutils.runtime.PulsarRuntimeOperator;
-import org.apache.flink.connectors.test.common.junit.extensions.TestLoggerExtension;
+import org.apache.flink.util.TestLoggerExtension;
 
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,9 +30,9 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * The base class for the all Pulsar related test sites. It brings up:
  *
  * <ul>
- *   <li>A Zookeeper cluster.
- *   <li>Pulsar Broker.
- *   <li>A Bookkeeper cluster.
+ *   <li>A standalone Zookeeper.
+ *   <li>A standalone Pulsar Broker.
+ *   <li>A standalone Bookkeeper.
  * </ul>
  *
  * <p>You just need to write a JUnit 5 test class and extends this suite class. All the helper
@@ -56,7 +56,7 @@ public abstract class PulsarTestSuiteBase {
      * pulsar broker. Override this method when needs.
      */
     protected PulsarRuntime runtime() {
-        return PulsarRuntime.mock();
+        return PulsarRuntime.container();
     }
 
     /** Operate pulsar by acquiring a runtime operator. */

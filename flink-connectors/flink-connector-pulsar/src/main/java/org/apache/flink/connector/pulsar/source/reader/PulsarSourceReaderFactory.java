@@ -21,12 +21,14 @@ package org.apache.flink.connector.pulsar.source.reader;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.connector.source.SourceReader;
 import org.apache.flink.api.connector.source.SourceReaderContext;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
 import org.apache.flink.connector.base.source.reader.synchronization.FutureCompletingBlockingQueue;
+import org.apache.flink.connector.pulsar.common.schema.BytesSchema;
+import org.apache.flink.connector.pulsar.common.schema.PulsarSchema;
 import org.apache.flink.connector.pulsar.source.config.SourceConfiguration;
 import org.apache.flink.connector.pulsar.source.reader.deserializer.PulsarDeserializationSchema;
-import org.apache.flink.connector.pulsar.source.reader.message.PulsarMessage;
+import org.apache.flink.connector.pulsar.source.reader.deserializer.PulsarSchemaWrapper;
+import org.apache.flink.connector.pulsar.source.reader.emitter.PulsarRecordEmitter;
 import org.apache.flink.connector.pulsar.source.reader.source.PulsarOrderedSourceReader;
 import org.apache.flink.connector.pulsar.source.reader.source.PulsarUnorderedSourceReader;
 import org.apache.flink.connector.pulsar.source.reader.split.PulsarOrderedPartitionSplitReader;
@@ -34,16 +36,20 @@ import org.apache.flink.connector.pulsar.source.reader.split.PulsarUnorderedPart
 import org.apache.flink.connector.pulsar.source.split.PulsarPartitionSplit;
 
 import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.api.CryptoKeyReader;
+import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.PulsarClient;
+import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.client.api.transaction.TransactionCoordinatorClient;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 
+import javax.annotation.Nullable;
+
 import java.util.function.Supplier;
 
-import static org.apache.flink.connector.base.source.reader.SourceReaderOptions.ELEMENT_QUEUE_CAPACITY;
-import static org.apache.flink.connector.pulsar.common.config.PulsarConfigUtils.createAdmin;
-import static org.apache.flink.connector.pulsar.common.config.PulsarConfigUtils.createClient;
+import static org.apache.flink.connector.pulsar.common.config.PulsarClientFactory.createAdmin;
+import static org.apache.flink.connector.pulsar.common.config.PulsarClientFactory.createClient;
 
 /**
  * This factory class is used for creating different types of source reader for different
@@ -65,35 +71,47 @@ public final class PulsarSourceReaderFactory {
     public static <OUT> SourceReader<OUT, PulsarPartitionSplit> create(
             SourceReaderContext readerContext,
             PulsarDeserializationSchema<OUT> deserializationSchema,
-            Configuration configuration,
-            SourceConfiguration sourceConfiguration) {
+            SourceConfiguration sourceConfiguration,
+            @Nullable CryptoKeyReader cryptoKeyReader) {
 
-        PulsarClient pulsarClient = createClient(configuration);
-        PulsarAdmin pulsarAdmin = createAdmin(configuration);
+        PulsarClient pulsarClient = createClient(sourceConfiguration);
+        PulsarAdmin pulsarAdmin = createAdmin(sourceConfiguration);
+
+        // Choose the right schema to use.
+        Schema<byte[]> schema;
+        if (sourceConfiguration.isEnableSchemaEvolution()) {
+            PulsarSchema<?> pulsarSchema =
+                    ((PulsarSchemaWrapper<?>) deserializationSchema).pulsarSchema();
+            schema = new BytesSchema(pulsarSchema);
+        } else {
+            schema = Schema.BYTES;
+        }
 
         // Create a message queue with the predefined source option.
-        int queueSize = configuration.getInteger(ELEMENT_QUEUE_CAPACITY);
-        FutureCompletingBlockingQueue<RecordsWithSplitIds<PulsarMessage<OUT>>> elementsQueue =
-                new FutureCompletingBlockingQueue<>(queueSize);
+        int queueCapacity = sourceConfiguration.getMessageQueueCapacity();
+        FutureCompletingBlockingQueue<RecordsWithSplitIds<Message<byte[]>>> elementsQueue =
+                new FutureCompletingBlockingQueue<>(queueCapacity);
+
+        PulsarRecordEmitter<OUT> recordEmitter = new PulsarRecordEmitter<>(deserializationSchema);
 
         // Create different pulsar source reader by subscription type.
         SubscriptionType subscriptionType = sourceConfiguration.getSubscriptionType();
         if (subscriptionType == SubscriptionType.Failover
                 || subscriptionType == SubscriptionType.Exclusive) {
             // Create a ordered split reader supplier.
-            Supplier<PulsarOrderedPartitionSplitReader<OUT>> splitReaderSupplier =
+            Supplier<PulsarOrderedPartitionSplitReader> splitReaderSupplier =
                     () ->
-                            new PulsarOrderedPartitionSplitReader<>(
+                            new PulsarOrderedPartitionSplitReader(
                                     pulsarClient,
                                     pulsarAdmin,
-                                    configuration,
                                     sourceConfiguration,
-                                    deserializationSchema);
+                                    schema,
+                                    cryptoKeyReader);
 
             return new PulsarOrderedSourceReader<>(
                     elementsQueue,
                     splitReaderSupplier,
-                    configuration,
+                    recordEmitter,
                     readerContext,
                     sourceConfiguration,
                     pulsarClient,
@@ -107,20 +125,20 @@ public final class PulsarSourceReaderFactory {
                 throw new IllegalStateException("Transaction is required but didn't enabled");
             }
 
-            Supplier<PulsarUnorderedPartitionSplitReader<OUT>> splitReaderSupplier =
+            Supplier<PulsarUnorderedPartitionSplitReader> splitReaderSupplier =
                     () ->
-                            new PulsarUnorderedPartitionSplitReader<>(
+                            new PulsarUnorderedPartitionSplitReader(
                                     pulsarClient,
                                     pulsarAdmin,
-                                    configuration,
                                     sourceConfiguration,
-                                    deserializationSchema,
+                                    schema,
+                                    cryptoKeyReader,
                                     coordinatorClient);
 
             return new PulsarUnorderedSourceReader<>(
                     elementsQueue,
                     splitReaderSupplier,
-                    configuration,
+                    recordEmitter,
                     readerContext,
                     sourceConfiguration,
                     pulsarClient,

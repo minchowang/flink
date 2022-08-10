@@ -20,8 +20,8 @@ package org.apache.flink.connector.pulsar.testutils;
 
 import org.apache.flink.connector.pulsar.testutils.runtime.PulsarRuntime;
 import org.apache.flink.connector.pulsar.testutils.runtime.PulsarRuntimeOperator;
-import org.apache.flink.connectors.test.common.TestResource;
-import org.apache.flink.connectors.test.common.junit.annotations.ExternalSystem;
+import org.apache.flink.connector.testframe.TestResource;
+import org.apache.flink.connector.testframe.junit.annotations.TestExternalSystem;
 
 import org.junit.jupiter.api.extension.AfterAllCallback;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
@@ -37,7 +37,7 @@ import java.util.List;
 
 /**
  * A JUnit 5 {@link Extension} for supporting running a pulsar instance before executing tests. This
- * class is also a {@link ExternalSystem} for {@code flink-connector-testing} tools.
+ * class is also a {@link TestExternalSystem} for {@code flink-connector-test-util} tools.
  *
  * <p>Some old flink tests are based on JUint 4, this class is also support it. The follow code
  * snippet shows how to use this class in JUnit 4.
@@ -48,7 +48,7 @@ import java.util.List;
  * }</pre>
  *
  * <p>If you want to use this class in JUnit 5, just simply extends {@link PulsarTestSuiteBase}, all
- * the helper methods in {@code PulsarContainerOperator} is also exposed there.
+ * the helper methods in {@link PulsarRuntimeOperator} is also exposed there.
  */
 public class PulsarTestEnvironment
         implements BeforeAllCallback, AfterAllCallback, TestResource, TestRule {
@@ -90,7 +90,7 @@ public class PulsarTestEnvironment
         runtime.startUp();
     }
 
-    /** flink-connector-testing setup method. */
+    /** Start up the test resource. */
     @Override
     public void startUp() {
         runtime.startUp();
@@ -102,7 +102,7 @@ public class PulsarTestEnvironment
         runtime.tearDown();
     }
 
-    /** flink-connector-testing shutdown method. */
+    /** Tear down the test resource. */
     @Override
     public void tearDown() {
         runtime.tearDown();

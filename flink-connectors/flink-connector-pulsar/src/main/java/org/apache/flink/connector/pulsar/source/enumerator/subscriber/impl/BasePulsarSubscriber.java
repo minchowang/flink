@@ -20,7 +20,6 @@ package org.apache.flink.connector.pulsar.source.enumerator.subscriber.impl;
 
 import org.apache.flink.connector.pulsar.source.enumerator.subscriber.PulsarSubscriber;
 import org.apache.flink.connector.pulsar.source.enumerator.topic.TopicMetadata;
-import org.apache.flink.connector.pulsar.source.enumerator.topic.TopicNameUtils;
 import org.apache.flink.connector.pulsar.source.enumerator.topic.TopicPartition;
 import org.apache.flink.connector.pulsar.source.enumerator.topic.TopicRange;
 
@@ -28,10 +27,12 @@ import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.IntStream;
 
 import static java.util.stream.Collectors.toList;
+import static org.apache.flink.connector.pulsar.source.enumerator.topic.TopicNameUtils.topicName;
+import static org.apache.flink.connector.pulsar.source.enumerator.topic.TopicPartition.NON_PARTITION_ID;
 
 /** PulsarSubscriber abstract class to simplify Pulsar admin related operations. */
 public abstract class BasePulsarSubscriber implements PulsarSubscriber {
@@ -39,7 +40,7 @@ public abstract class BasePulsarSubscriber implements PulsarSubscriber {
 
     protected TopicMetadata queryTopicMetadata(PulsarAdmin pulsarAdmin, String topicName) {
         // Drop the complete topic name for a clean partitioned topic name.
-        String completeTopicName = TopicNameUtils.topicName(topicName);
+        String completeTopicName = topicName(topicName);
         try {
             PartitionedTopicMetadata metadata =
                     pulsarAdmin.topics().getPartitionedTopicMetadata(completeTopicName);
@@ -60,21 +61,18 @@ public abstract class BasePulsarSubscriber implements PulsarSubscriber {
         if (!metadata.isPartitioned()) {
             // For non-partitioned topic.
             return ranges.stream()
-                    .map(range -> new TopicPartition(metadata.getName(), -1, range))
+                    .map(range -> new TopicPartition(metadata.getName(), NON_PARTITION_ID, range))
                     .collect(toList());
         } else {
-            return IntStream.range(0, metadata.getPartitionSize())
-                    .boxed()
-                    .flatMap(
-                            partitionId ->
-                                    ranges.stream()
-                                            .map(
-                                                    range ->
-                                                            new TopicPartition(
-                                                                    metadata.getName(),
-                                                                    partitionId,
-                                                                    range)))
-                    .collect(toList());
+            List<TopicPartition> partitions = new ArrayList<>();
+            for (int i = 0; i < metadata.getPartitionSize(); i++) {
+                for (TopicRange range : ranges) {
+                    TopicPartition partition = new TopicPartition(metadata.getName(), i, range);
+                    partitions.add(partition);
+                }
+            }
+
+            return partitions;
         }
     }
 }

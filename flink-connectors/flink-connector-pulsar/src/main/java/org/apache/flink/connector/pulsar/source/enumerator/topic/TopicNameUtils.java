@@ -20,13 +20,45 @@ package org.apache.flink.connector.pulsar.source.enumerator.topic;
 
 import org.apache.flink.annotation.Internal;
 
+import org.apache.flink.shaded.guava30.com.google.common.collect.ImmutableList;
+import org.apache.flink.shaded.guava30.com.google.common.collect.ImmutableSet;
+
 import org.apache.pulsar.common.naming.TopicName;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+
 import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.pulsar.common.naming.NamespaceName.SYSTEM_NAMESPACE;
+import static org.apache.pulsar.common.naming.TopicDomain.persistent;
 
 /** util for topic name. */
 @Internal
 public final class TopicNameUtils {
+
+    private static final Pattern HEARTBEAT_NAMESPACE_PATTERN =
+            Pattern.compile("pulsar/[^/]+/([^:]+:\\d+)");
+    private static final Pattern HEARTBEAT_NAMESPACE_PATTERN_V2 =
+            Pattern.compile("pulsar/([^:]+:\\d+)");
+    private static final Pattern SLA_NAMESPACE_PATTERN =
+            Pattern.compile("sla-monitor" + "/[^/]+/([^:]+:\\d+)");
+    private static final Set<String> SYSTEM_TOPIC_NAMES =
+            ImmutableSet.of(
+                    "__change_events",
+                    "__transaction_buffer_snapshot",
+                    "__pending_ack_state",
+                    "__transaction_pending_ack");
+
+    private static final String TRANSACTION_COORDINATOR_ASSIGN_PREFIX =
+            TopicName.get(persistent.value(), SYSTEM_NAMESPACE, "transaction_coordinator_assign")
+                    .toString();
+    private static final String TRANSACTION_COORDINATOR_LOG_PREFIX =
+            TopicName.get(persistent.value(), SYSTEM_NAMESPACE, "__transaction_log_").toString();
 
     private TopicNameUtils() {
         // No public constructor.
@@ -41,5 +73,66 @@ public final class TopicNameUtils {
     public static String topicNameWithPartition(String topic, int partitionId) {
         checkArgument(partitionId >= 0, "Illegal partition id %s", partitionId);
         return TopicName.get(topic).getPartition(partitionId).toString();
+    }
+
+    public static boolean isPartitioned(String topic) {
+        return TopicName.get(topic).isPartitioned();
+    }
+
+    /** Merge the same topics into one topics. */
+    public static List<String> distinctTopics(List<String> topics) {
+        Set<String> fullTopics = new HashSet<>();
+        Map<String, List<Integer>> partitionedTopics = new HashMap<>();
+
+        for (String topic : topics) {
+            TopicName topicName = TopicName.get(topic);
+            String partitionedTopicName = topicName.getPartitionedTopicName();
+
+            if (!topicName.isPartitioned()) {
+                fullTopics.add(partitionedTopicName);
+                partitionedTopics.remove(partitionedTopicName);
+            } else if (!fullTopics.contains(partitionedTopicName)) {
+                List<Integer> partitionIds =
+                        partitionedTopics.computeIfAbsent(
+                                partitionedTopicName, k -> new ArrayList<>());
+                partitionIds.add(topicName.getPartitionIndex());
+            }
+        }
+
+        ImmutableList.Builder<String> builder = ImmutableList.<String>builder().addAll(fullTopics);
+
+        for (Map.Entry<String, List<Integer>> topicSet : partitionedTopics.entrySet()) {
+            String topicName = topicSet.getKey();
+            for (Integer partitionId : topicSet.getValue()) {
+                builder.add(topicNameWithPartition(topicName, partitionId));
+            }
+        }
+
+        return builder.build();
+    }
+
+    /**
+     * This method is refactored from {@code BrokerService} in pulsar-broker which is not available
+     * in Pulsar client. We have to put it here and self maintained. Since these topic names would
+     * never be changed for backward compatible, we only need to add new topic names after version
+     * bump.
+     *
+     * @see <a
+     *     href="https://github.com/apache/pulsar/blob/7576c9303513ef8212452ff64a5a53ec7def6a5b/pulsar-broker/src/main/java/org/apache/pulsar/broker/service/BrokerService.java#L2934">BrokerService#isSystemTopic</a>
+     */
+    public static boolean isInternal(String topic) {
+        // A topic name instance without partition information.
+        String topicName = topicName(topic);
+        TopicName topicInstance = TopicName.get(topicName);
+        String localName = topicInstance.getLocalName();
+        String namespace = topicInstance.getNamespace();
+
+        return namespace.equals(SYSTEM_NAMESPACE.toString())
+                || SLA_NAMESPACE_PATTERN.matcher(namespace).matches()
+                || HEARTBEAT_NAMESPACE_PATTERN.matcher(namespace).matches()
+                || HEARTBEAT_NAMESPACE_PATTERN_V2.matcher(namespace).matches()
+                || SYSTEM_TOPIC_NAMES.contains(localName)
+                || topicName.startsWith(TRANSACTION_COORDINATOR_ASSIGN_PREFIX)
+                || topicName.startsWith(TRANSACTION_COORDINATOR_LOG_PREFIX);
     }
 }
